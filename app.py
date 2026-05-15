@@ -11,10 +11,10 @@ import google.genai as genai
 from google.genai import types
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
-API_KEY     = os.environ["GEMINI_API_KEY"]
-STORE_NAME  = os.environ.get("STORE_NAME", "fileSearchStores/userstudystore")
-MODEL       = "gemini-2.5-flash"
-LOG_FILE    = "experiment_log.jsonl"
+API_KEY    = os.environ["GEMINI_API_KEY"]
+STORE_NAME = os.environ.get("STORE_NAME", "fileSearchStores/userstudystore")
+MODEL      = "gemini-2.5-flash"
+LOG_FILE   = "experiment_log.jsonl"
 
 client = genai.Client(api_key=API_KEY)
 
@@ -24,25 +24,11 @@ file_search_tool = types.Tool(
 
 # ── TASKS ─────────────────────────────────────────────────────────────────────
 TASKS = [
-    {"id": 1, "title": "Ritual object",
-     "description": "Find a ritual object in the collection.",
-     "hint": "ritual object / ritueel"},
-
-    {"id": 2, "title": "Oldest item",
-     "description": "Find the oldest item in the dataset.",
-     "hint": "negative dates / B.C."},
-
-    {"id": 3, "title": "Lacquerware",
-     "description": "Find two lacquerware items.",
-     "hint": "lakwerk / lacquer"},
-
-    {"id": 4, "title": "1700 items",
-     "description": "How many items were created around 1700?",
-     "hint": "1700 / 18th century"},
-
-    {"id": 5, "title": "Anonymous creators",
-     "description": "Find three anonymous creator items.",
-     "hint": "anonymous"}
+    {"id": 1, "title": "Ritual object", "hint": "ritual object / ritueel"},
+    {"id": 2, "title": "Oldest item", "hint": "negative dates / B.C."},
+    {"id": 3, "title": "Lacquerware", "hint": "lakwerk / lacquer"},
+    {"id": 4, "title": "1700 items", "hint": "1700 / 18th century"},
+    {"id": 5, "title": "Anonymous items", "hint": "anonymous"},
 ]
 
 # ── GROUND TRUTH (H2) ─────────────────────────────────────────────────────────
@@ -57,10 +43,10 @@ GROUND_TRUTH = {
 def grade_answer(task_id, text):
     if not text:
         return 0.0
-    keywords = GROUND_TRUTH.get(task_id, [])
+    keys = GROUND_TRUTH.get(task_id, [])
     t = text.lower()
-    score = sum(1 for k in keywords if k in t)
-    return round(score / max(len(keywords), 1), 2)
+    score = sum(1 for k in keys if k in t)
+    return round(score / max(len(keys), 1), 2)
 
 # ── LOGGING ───────────────────────────────────────────────────────────────────
 def log_event(pid, condition, event, data):
@@ -74,11 +60,11 @@ def log_event(pid, condition, event, data):
     with open(LOG_FILE, "a") as f:
         f.write(json.dumps(entry) + "\n")
 
-# ── CONDITION ASSIGNMENT (within-subject) ─────────────────────────────────────
+# ── CONDITION ASSIGNMENT ──────────────────────────────────────────────────────
 def assign_condition(task_id):
     return "A" if task_id % 2 == 0 else "B"
 
-# ── CONDITION A (keyword search) ─────────────────────────────────────────────
+# ── CONDITION A (KEYWORD SEARCH) ─────────────────────────────────────────────
 def keyword_search(query):
     import pandas as pd
     try:
@@ -103,11 +89,12 @@ def search_a(query, state):
         "elapsed": round(time.time() - t0, 3)
     })
 
-    return f"{len(results)} results", state
+    return f"{len(results)} results found", state
 
-# ── CONDITION B (AI CHAT FIXED) ──────────────────────────────────────────────
+# ── CONDITION B (AI CHAT — OLD GRADIO FORMAT) ────────────────────────────────
 SYSTEM_PROMPT = (
-    "You are a museum assistant. Use sources. If unsure, say so."
+    "You are a museum research assistant. Use sources when available. "
+    "If unsure, say so clearly."
 )
 
 def chat_b(message, history, state):
@@ -119,12 +106,19 @@ def chat_b(message, history, state):
     state["queries"] = state.get("queries", []) + [message]
     state["query_count"] = state.get("query_count", 0) + 1
 
-    # FIXED FORMAT
+    # ── Convert old tuple history → Gemini format ──
     contents = []
-    for h in history or []:
+    for turn in history or []:
+        user_msg, bot_msg = turn
+
         contents.append(types.Content(
-            role=h["role"],
-            parts=[types.Part(text=h["content"])]
+            role="user",
+            parts=[types.Part(text=user_msg)]
+        ))
+
+        contents.append(types.Content(
+            role="model",
+            parts=[types.Part(text=bot_msg)]
         ))
 
     contents.append(types.Content(
@@ -132,17 +126,22 @@ def chat_b(message, history, state):
         parts=[types.Part(text=message)]
     ))
 
-    response = client.models.generate_content(
-        model=MODEL,
-        contents=contents,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            tools=[file_search_tool]
+    try:
+        response = client.models.generate_content(
+            model=MODEL,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                tools=[file_search_tool],
+            )
         )
-    )
 
-    answer = response.text or ""
+        answer = response.text or "No response generated."
 
+    except Exception as e:
+        answer = f"Error: {e}"
+
+    # ── LOG FULL RESPONSE ──
     log_event(state.get("participant_id"), "B", "chat", {
         "query": message,
         "response_text": answer,
@@ -150,10 +149,8 @@ def chat_b(message, history, state):
         "elapsed": round(time.time() - t0, 3)
     })
 
-    new_history = (history or []) + [
-        {"role": "user", "content": message},
-        {"role": "assistant", "content": answer}
-    ]
+    # ── OLD GRADIO FORMAT (IMPORTANT FIX) ──
+    new_history = (history or []) + [[message, answer]]
 
     return "", new_history, state, new_history
 
@@ -173,7 +170,7 @@ def submit_survey(pid, condition, task_id, completed, time_min,
         "final_answer": final_answer,
         "accuracy_score": accuracy_score,
         "trust": trust,
-        "useful": useful,
+        "usefulness": useful,
         "ease": ease,
         "accuracy_self": accuracy_self,
         "recommend": recommend,
@@ -182,10 +179,11 @@ def submit_survey(pid, condition, task_id, completed, time_min,
         "toast_trustworthy": toast_t,
         "verified": verified,
         "comments": comments,
-        "query_count": state.get("query_count", 0)
+        "query_count": state.get("query_count", 0),
+        "queries": state.get("queries", [])
     })
 
-    return f"Submitted. Accuracy score: {accuracy_score}"
+    return f"Submitted successfully. Accuracy score: {accuracy_score}"
 
 # ── SESSION START ─────────────────────────────────────────────────────────────
 def start_session(pid, task_label, state):
@@ -205,37 +203,44 @@ def start_session(pid, task_label, state):
 
     log_event(pid, condition, "start", {"task_id": task_id})
 
-    return f"{task['description']}\nHint: {task['hint']}", state
+    return f"""
+Task: {task['title']}
+Condition: {condition}
+
+Hint: {task['hint']}
+""", state
 
 # ── UI ────────────────────────────────────────────────────────────────────────
 with gr.Blocks() as demo:
 
-    state = gr.State([])
+    state = gr.State({})
     chat_history = gr.State([])
 
-    gr.Markdown("# Museum Study (Fixed + Research Version)")
+    gr.Markdown("# Museum Study (Stable Version)")
 
+    # ── SETUP ──
     with gr.Tab("Setup"):
         pid = gr.Textbox(label="Participant ID")
         task = gr.Dropdown(
             choices=[f"Task {t['id']}: {t['title']}" for t in TASKS]
         )
-        start_btn = gr.Button("Start")
-
+        btn = gr.Button("Start")
         out = gr.Markdown()
 
-        start_btn.click(start_session, [pid, task, state], [out, state])
+        btn.click(start_session, [pid, task, state], [out, state])
 
-    with gr.Tab("Keyword"):
+    # ── KEYWORD SEARCH ──
+    with gr.Tab("Keyword Search"):
         q = gr.Textbox()
-        btn = gr.Button("Search")
-        res = gr.Textbox()
+        btn2 = gr.Button("Search")
+        out2 = gr.Textbox()
 
-        btn.click(search_a, [q, state], [res, state])
+        btn2.click(search_a, [q, state], [out2, state])
 
+    # ── AI CHAT (FIXED FOR YOUR GRADIO VERSION) ──
     with gr.Tab("AI Chat"):
 
-        chatbot = gr.Chatbot(type="messages", height=450)
+        chatbot = gr.Chatbot(height=450)  # ❗ NO type="messages"
 
         msg = gr.Textbox()
         send = gr.Button("Send")
@@ -246,6 +251,7 @@ with gr.Blocks() as demo:
         msg.submit(chat_b, [msg, chat_history, state],
                   [msg, chatbot, state, chat_history])
 
+    # ── SURVEY ──
     with gr.Tab("Survey"):
         final = gr.Textbox(label="Final answer")
 
@@ -265,9 +271,9 @@ with gr.Blocks() as demo:
         verified = gr.Radio(["Yes", "No"])
         comments = gr.Textbox()
 
-        btn = gr.Button("Submit")
+        submit = gr.Button("Submit")
 
-        btn.click(
+        submit.click(
             submit_survey,
             [pid, gr.State("A"), gr.State(1), completed, time_min,
              final,
