@@ -139,8 +139,8 @@ SYSTEM_PROMPT_B = (
     "Always mention which source document you used."
 )
 
-# FIX: Use new messages format ({"role": ..., "content": ...}) instead of tuples.
-# gr.Chatbot(type="messages") requires this format; tuples are deprecated in recent Gradio.
+# History is stored as tuples [[user_msg, bot_msg], ...] for compatibility with
+# the installed Gradio version (which does not support type="messages").
 def chat_condition_b(message, history, state):
     if not message.strip():
         return "", history, state, history
@@ -149,15 +149,15 @@ def chat_condition_b(message, history, state):
     state["queries"] = state.get("queries", []) + [message]
     t_start = time.time()
 
-    # Build contents from new-format history (list of {"role": ..., "content": ...})
+    # Build Gemini contents from tuple history [[user, bot], ...]
     contents = []
     for turn in (history or []):
-        role = turn.get("role")
-        content = turn.get("content", "")
-        if role == "user":
-            contents.append(types.Content(role="user",  parts=[types.Part(text=str(content))]))
-        elif role == "assistant":
-            contents.append(types.Content(role="model", parts=[types.Part(text=str(content))]))
+        if isinstance(turn, (list, tuple)) and len(turn) == 2:
+            user_msg, assistant_msg = turn
+            if user_msg:
+                contents.append(types.Content(role="user",  parts=[types.Part(text=str(user_msg))]))
+            if assistant_msg:
+                contents.append(types.Content(role="model", parts=[types.Part(text=str(assistant_msg))]))
 
     contents.append(types.Content(role="user", parts=[types.Part(text=message)]))
 
@@ -209,11 +209,8 @@ def chat_condition_b(message, history, state):
     except Exception as e:
         answer = f"Error: {e}"
 
-    # Build new history in messages format
-    new_history = list(history or []) + [
-        {"role": "user",      "content": message},
-        {"role": "assistant", "content": answer},
-    ]
+    # Build new history as tuples [[user, bot], ...] (old Gradio format)
+    new_history = list(history or []) + [[message, answer]]
     return "", new_history, state, new_history
 
 # ── Pre-task survey submission ────────────────────────────────────────────────
@@ -431,7 +428,7 @@ with gr.Blocks(title="Museum Collection Experiment") as demo:
         gr.Markdown("### Condition B — AI-Powered Research Assistant\nAsk questions in natural language. AI answers may contain errors — always verify with source links.")
 
         # FIX: type="messages" → expects {"role": ..., "content": ...} dicts, not tuples
-        chatbot = gr.Chatbot(label="Chat", height=480, type="messages")
+        chatbot = gr.Chatbot(label="Chat", height=480)
 
         with gr.Row():
             chat_box = gr.Textbox(
