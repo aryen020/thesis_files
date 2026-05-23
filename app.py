@@ -139,8 +139,27 @@ SYSTEM_PROMPT_B = (
     "Always mention which source document you used."
 )
 
-# History is stored as tuples [[user_msg, bot_msg], ...] for compatibility with
-# the installed Gradio version (which does not support type="messages").
+# History uses {"role": "user"/"assistant", "content": str} dicts.
+# This Gradio build rejects tuples at render time even without type="messages".
+# The helper below also handles legacy tuples defensively.
+def _to_gemini_contents(history):
+    contents = []
+    for turn in (history or []):
+        if isinstance(turn, dict):
+            role = turn.get("role", "")
+            text = str(turn.get("content", ""))
+            if role == "user" and text:
+                contents.append(types.Content(role="user",  parts=[types.Part(text=text)]))
+            elif role == "assistant" and text:
+                contents.append(types.Content(role="model", parts=[types.Part(text=text)]))
+        elif isinstance(turn, (list, tuple)) and len(turn) == 2:
+            u, b = turn
+            if u:
+                contents.append(types.Content(role="user",  parts=[types.Part(text=str(u))]))
+            if b:
+                contents.append(types.Content(role="model", parts=[types.Part(text=str(b))]))
+    return contents
+
 def chat_condition_b(message, history, state):
     if not message.strip():
         return "", history, state, history
@@ -149,15 +168,7 @@ def chat_condition_b(message, history, state):
     state["queries"] = state.get("queries", []) + [message]
     t_start = time.time()
 
-    # Build Gemini contents from tuple history [[user, bot], ...]
-    contents = []
-    for turn in (history or []):
-        if isinstance(turn, (list, tuple)) and len(turn) == 2:
-            user_msg, assistant_msg = turn
-            if user_msg:
-                contents.append(types.Content(role="user",  parts=[types.Part(text=str(user_msg))]))
-            if assistant_msg:
-                contents.append(types.Content(role="model", parts=[types.Part(text=str(assistant_msg))]))
+    contents = _to_gemini_contents(history)
 
     contents.append(types.Content(role="user", parts=[types.Part(text=message)]))
 
@@ -209,8 +220,11 @@ def chat_condition_b(message, history, state):
     except Exception as e:
         answer = f"Error: {e}"
 
-    # Build new history as tuples [[user, bot], ...] (old Gradio format)
-    new_history = list(history or []) + [[message, answer]]
+    # Build history as dicts — required by this Gradio build
+    new_history = list(history or []) + [
+        {"role": "user",      "content": message},
+        {"role": "assistant", "content": answer},
+    ]
     return "", new_history, state, new_history
 
 # ── Pre-task survey submission ────────────────────────────────────────────────
