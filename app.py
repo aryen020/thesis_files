@@ -5,27 +5,29 @@ subprocess.run([sys.executable, "-m", "pip", "install", "google-genai"], check=T
 import os
 import json
 import time
+import random
 import datetime
+import pandas as pd
 import gradio as gr
 import google.genai as genai
 from google.genai import types
 
-# ── Config ────────────────────────────────────────────────────────────────────
+# ── Config ───────────────────────────────────────────────────────────────
 API_KEY             = os.environ["GEMINI_API_KEY"]
 STORE_NAME          = os.environ.get("STORE_NAME", "fileSearchStores/userstudystore-3gytybx82f4t")
-RESEARCHER_PASSWORD = os.environ.get("RESEARCHER_PASSWORD", "mypassword123")
 MODEL               = "gemini-2.5-flash"
 LOG_FILE            = "experiment_log.jsonl"
 CSV_PATH            = "small_dataset.csv"
-# ─────────────────────────────────────────────────────────────────────────────
 
 client = genai.Client(api_key=API_KEY)
 
 file_search_tool = types.Tool(
-    file_search=types.FileSearch(file_search_store_names=[STORE_NAME])
+    file_search=types.FileSearch(
+        file_search_store_names=[STORE_NAME]
+    )
 )
 
-# ── Experiment Tasks (hints removed — they asymmetrically help Condition A) ───
+# ── Tasks ────────────────────────────────────────────────────────────────
 TASKS = [
     {
         "id": 1,
@@ -54,7 +56,7 @@ TASKS = [
     },
 ]
 
-# ── Logging ───────────────────────────────────────────────────────────────────
+# ── Logging ──────────────────────────────────────────────────────────────
 def log_event(participant_id, condition, event_type, data):
     entry = {
         "timestamp": datetime.datetime.utcnow().isoformat(),
@@ -63,116 +65,190 @@ def log_event(participant_id, condition, event_type, data):
         "event": event_type,
     }
     entry.update(data)
+
     with open(LOG_FILE, "a") as f:
         f.write(json.dumps(entry) + "\n")
 
-# ── Condition A: Simple keyword search ────────────────────────────────────────
+# ── Condition Assignment ─────────────────────────────────────────────────
+def assign_condition(pid):
+    random.seed(pid)
+    return random.choice(["A", "B"])
+
+# ── Keyword Search ───────────────────────────────────────────────────────
 def keyword_search(query):
-    import pandas as pd
     results = []
+
     try:
         df = pd.read_csv(CSV_PATH, encoding="utf-8", encoding_errors="replace")
-        q = query.lower()
-        mask = df.apply(lambda row: row.astype(str).str.lower().str.contains(q).any(), axis=1)
+
+        keywords = query.lower().split()
+
+        mask = df.apply(
+            lambda row: any(
+                kw in " ".join(row.astype(str).str.lower())
+                for kw in keywords
+            ),
+            axis=1
+        )
+
         matched = df[mask].head(8)
+
         for _, row in matched.iterrows():
             results.append({
-                "id":      str(row.get("ID", "")),
-                "title":   str(row.get("Title", "Unknown")),
-                "type":    str(row.get("Type", "")),
+                "id": str(row.get("ID", "")),
+                "title": str(row.get("Title", "Unknown")),
+                "type": str(row.get("Type", "")),
                 "creator": str(row.get("Creator", "Anonymous")),
-                "date":    str(row.get("Creation_Date", "")),
-                "url":     str(row.get("Identifier", "")),
-                "image":   str(row.get("Image_URL", "")),
+                "date": str(row.get("Creation_Date", "")),
+                "url": str(row.get("Identifier", "")),
+                "image": str(row.get("Image_URL", "")),
             })
+
     except Exception as e:
-        results = [{"title": f"Error: {e}", "id": "", "type": "", "creator": "", "date": "", "url": "", "image": ""}]
+        results = [{
+            "title": f"Error: {e}",
+            "type": "",
+            "creator": "",
+            "date": "",
+            "url": "",
+            "image": "",
+        }]
+
     return results
 
+# ── Condition A Search ───────────────────────────────────────────────────
 def search_condition_a(query, state):
+
     if not query.strip():
-        return "<p style='color:#888'>Enter a search term above.</p>", state
+        return "<p>Enter a search term.</p>", state
 
     t_start = time.time()
+
     results = keyword_search(query)
-    elapsed = round(time.time() - t_start, 3)
 
-    state["query_count"] = state.get("query_count", 0) + 1
-    state["queries"] = state.get("queries", []) + [query]
+    elapsed = round(time.time() - t_start, 2)
 
-    log_event(state.get("participant_id", "unknown"), "A", "search", {
-        "query":        query,
-        "query_length": len(query),
-        "query_number": state.get("query_count", 0),
-        "result_count": len(results),
-        "elapsed_s":    elapsed,
-    })
+    state["query_count"] += 1
+    state["queries"].append(query)
 
-    if not results:
-        return "<p style='color:#e07b39;'>No results found. Try a different keyword.</p>", state
+    log_event(
+        state["participant_id"],
+        "A",
+        "search",
+        {
+            "query": query,
+            "elapsed_s": elapsed,
+            "results": len(results)
+        }
+    )
 
     cards = ""
-    for r in results:
-        img_html = ""
-        if r["image"] and r["image"] != "nan":
-            img_html = f"<img src='{r['image']}' style='width:80px;height:80px;object-fit:cover;border-radius:6px;flex-shrink:0;' onerror=\"this.style.display='none'\">"
-        link = f"<a href='{r['url']}' target='_blank' style='color:#c77d3a;font-size:11px;'>View record</a>" if r["url"] and r["url"] != "nan" else ""
-        cards += f"""
-<div style='display:flex;gap:12px;align-items:flex-start;background:#f9f9f9;border:1px solid #ddd;border-radius:10px;padding:14px;margin-bottom:10px;'>
-    {img_html}
-    <div>
-        <div style='font-weight:600;font-size:15px;'>{r['title']}</div>
-        <div style='color:#666;font-size:12px;margin-top:4px;'>
-            Type: {r['type']} | Creator: {r['creator']} | Date: {r['date']}
-        </div>
-        <div style='margin-top:6px;'>{link}</div>
-    </div>
-</div>"""
 
-    html = f"<div style='font-size:12px;color:#888;margin-bottom:10px;'>{len(results)} result(s) for \"{query}\" · {elapsed}s · Keyword matches only, no AI interpretation.</div>{cards}"
+    for r in results:
+
+        img_html = ""
+
+        if r["image"] and r["image"] != "nan":
+            img_html = f"""
+            <img src="{r['image']}"
+                 style="width:90px;height:90px;object-fit:cover;border-radius:8px;">
+            """
+
+        cards += f"""
+        <div style="
+            border:1px solid #ddd;
+            border-radius:12px;
+            padding:14px;
+            margin-bottom:12px;
+            display:flex;
+            gap:14px;
+            background:white;
+        ">
+            {img_html}
+
+            <div>
+                <div style="font-weight:700;font-size:17px;">
+                    {r['title']}
+                </div>
+
+                <div style="font-size:13px;color:#666;margin-top:4px;">
+                    Type: {r['type']}<br>
+                    Creator: {r['creator']}<br>
+                    Date: {r['date']}
+                </div>
+
+                <div style="margin-top:8px;">
+                    <a href="{r['url']}" target="_blank">
+                        View Record
+                    </a>
+                </div>
+            </div>
+        </div>
+        """
+
+    html = f"""
+    <div style="margin-bottom:10px;color:#666;">
+        {len(results)} results · {elapsed}s
+    </div>
+
+    {cards}
+    """
+
     return html, state
 
-# ── Condition B: RAG Chat ─────────────────────────────────────────────────────
+# ── Gemini Chat ──────────────────────────────────────────────────────────
 SYSTEM_PROMPT_B = (
-    "You are a helpful museum research assistant. Answer questions using the indexed collection documents. "
-    "Be clear and informative. If you are unsure or the document does not contain the answer, say so explicitly. "
-    "Always mention which source document you used."
+    "You are a helpful museum research assistant. "
+    "Answer using the indexed museum collection. "
+    "If unsure, say so explicitly."
 )
 
-# History uses {"role": "user"/"assistant", "content": str} dicts.
-# This Gradio build rejects tuples at render time even without type="messages".
-# The helper below also handles legacy tuples defensively.
 def _to_gemini_contents(history):
+
     contents = []
-    for turn in (history or []):
-        if isinstance(turn, dict):
-            role = turn.get("role", "")
-            text = str(turn.get("content", ""))
-            if role == "user" and text:
-                contents.append(types.Content(role="user",  parts=[types.Part(text=text)]))
-            elif role == "assistant" and text:
-                contents.append(types.Content(role="model", parts=[types.Part(text=text)]))
-        elif isinstance(turn, (list, tuple)) and len(turn) == 2:
-            u, b = turn
-            if u:
-                contents.append(types.Content(role="user",  parts=[types.Part(text=str(u))]))
-            if b:
-                contents.append(types.Content(role="model", parts=[types.Part(text=str(b))]))
+
+    for turn in history:
+
+        if turn["role"] == "user":
+            contents.append(
+                types.Content(
+                    role="user",
+                    parts=[types.Part(text=turn["content"])]
+                )
+            )
+
+        elif turn["role"] == "assistant":
+            contents.append(
+                types.Content(
+                    role="model",
+                    parts=[types.Part(text=turn["content"])]
+                )
+            )
+
     return contents
 
+# ── Condition B Chat ─────────────────────────────────────────────────────
 def chat_condition_b(message, history, state):
+
     if not message.strip():
         return "", history, state, history
 
-    state["query_count"] = state.get("query_count", 0) + 1
-    state["queries"] = state.get("queries", []) + [message]
-    t_start = time.time()
+    state["query_count"] += 1
+    state["queries"].append(message)
 
     contents = _to_gemini_contents(history)
 
-    contents.append(types.Content(role="user", parts=[types.Part(text=message)]))
+    contents.append(
+        types.Content(
+            role="user",
+            parts=[types.Part(text=message)]
+        )
+    )
+
+    t_start = time.time()
 
     try:
+
         response = client.models.generate_content(
             model=MODEL,
             contents=contents,
@@ -181,401 +257,336 @@ def chat_condition_b(message, history, state):
                 tools=[file_search_tool],
             )
         )
+
         answer = response.text or "No response generated."
-
-        sources = []
-        try:
-            for candidate in response.candidates:
-                if candidate.grounding_metadata:
-                    for chunk in (candidate.grounding_metadata.grounding_chunks or []):
-                        rc = getattr(chunk, "retrieved_context", None)
-                        if rc:
-                            name = getattr(rc, "title", None) or getattr(rc, "uri", None)
-                            if name and name not in sources:
-                                sources.append(name)
-        except Exception:
-            pass
-
-        elapsed = round(time.time() - t_start, 3)
-
-        low_confidence_phrases = ["i'm not sure", "i don't know", "cannot find", "not mentioned", "no information"]
-        if any(p in answer.lower() for p in low_confidence_phrases):
-            answer += "\n\n⚠️ Uncertainty notice: The AI indicated limited confidence. Please verify with the original source."
-
-        if sources:
-            src_links = " · ".join(s.replace('.txt','').replace('.pdf','') for s in sources)
-            answer += f"\n\nSources: {src_links}"
-
-        # FIX: Log full response text (not just length) for post-hoc hallucination analysis
-        log_event(state.get("participant_id", "unknown"), "B", "chat", {
-            "query":            message,
-            "query_length":     len(message),
-            "query_number":     state.get("query_count", 0),
-            "response_text":    answer,          # full text for H3 hallucination analysis
-            "response_length":  len(answer),
-            "sources":          sources,
-            "elapsed_s":        elapsed,
-        })
 
     except Exception as e:
         answer = f"Error: {e}"
 
-    # Build history as dicts — required by this Gradio build
-    new_history = list(history or []) + [
-        {"role": "user",      "content": message},
-        {"role": "assistant", "content": answer},
-    ]
-    return "", new_history, state, new_history
+    elapsed = round(time.time() - t_start, 2)
 
-# ── Pre-task survey submission ────────────────────────────────────────────────
-def submit_pre_survey(pid, age, education, language, museum_familiarity,
-                      ai_usage, aias1, aias2, aias3, aias4, search_comfort, state):
-    data = {
-        "participant_id":    pid,
-        "age":               age,
-        "education":         education,
-        "native_language":   language,
-        "museum_familiarity": museum_familiarity,
-        "ai_usage_freq":     ai_usage,
-        "aias4_item1":       aias1,
-        "aias4_item2":       aias2,
-        "aias4_item3":       aias3,
-        "aias4_item4":       aias4,
-        "search_comfort":    search_comfort,
-    }
-    log_event(pid, state.get("condition", "?"), "pre_survey", data)
-    return f"✅ Pre-task survey saved for **{pid}**. You may now proceed to the Setup tab."
-
-# ── Post-task survey submission ───────────────────────────────────────────────
-def submit_survey(pid, condition, task_id, task_completed, completion_time,
-                  q_answer_text, q_confidence,
-                  q_toast_reliable, q_toast_confident, q_toast_trustworthy,
-                  q_tlx_mental, q_tlx_effort,
-                  q_manipulation_check,
-                  q_verified, q_comments, state):
-    survey_data = {
-        "participant_id":         pid,
-        "condition":              condition,
-        "task_id":                task_id,
-        "task_completed":         task_completed,
-        "self_reported_time_min": completion_time,
-        # H2: accuracy
-        "participant_answer":     q_answer_text,
-        "answer_confidence":      q_confidence,
-        # H3: trust calibration
-        "toast_reliable":         q_toast_reliable,
-        "toast_confident":        q_toast_confident,
-        "toast_trustworthy":      q_toast_trustworthy,
-        # H4: effort/cognitive load
-        "tlx_mental_demand":      q_tlx_mental,
-        "tlx_effort":             q_tlx_effort,
-        # manipulation check
-        "manipulation_check":     q_manipulation_check,
-        # qualitative
-        "verified_sources":       q_verified,
-        "comments":               q_comments,
-        # behavioural
-        "query_count":            state.get("query_count", 0),
-        "queries":                state.get("queries", []),
-    }
-    log_event(pid, condition, "survey", survey_data)
-    return (
-        f"Survey submitted! Thank you, {pid}.\n\n"
-        f"Condition: {condition} · Task: {task_id} · Queries made: {state.get('query_count', 0)}\n\n"
-        f"Your responses have been saved to {LOG_FILE}."
+    log_event(
+        state["participant_id"],
+        "B",
+        "chat",
+        {
+            "query": message,
+            "response": answer,
+            "elapsed_s": elapsed,
+        }
     )
 
-# ── Session end ───────────────────────────────────────────────────────────────
-def end_session(state):
-    elapsed = round(time.time() - state.get("session_start", time.time()), 1)
-    log_event(state.get("participant_id", "unknown"), state.get("condition", "?"), "session_end", {
-        "task_id":       state.get("task_id"),
-        "total_time_s":  elapsed,
-        "total_queries": state.get("query_count", 0),
-        "all_queries":   state.get("queries", []),
-    })
-    return f"✅ Session ended for **{state.get('participant_id', '?')}**. Total time: {elapsed}s · Total queries: {state.get('query_count', 0)}"
+    new_history = history + [
+        {"role": "user", "content": message},
+        {"role": "assistant", "content": answer},
+    ]
 
-# ── Download / load log ───────────────────────────────────────────────────────
-def download_log():
-    if os.path.exists(LOG_FILE):
-        return LOG_FILE
-    return None
+    return "", new_history, state, new_history
 
-def load_log():
-    try:
-        with open(LOG_FILE) as f:
-            return f.read()
-    except FileNotFoundError:
-        return "No log entries yet."
+# ── Start Study ──────────────────────────────────────────────────────────
+def start_study(pid, age, ai_usage, state):
 
-# ── Build UI ──────────────────────────────────────────────────────────────────
-with gr.Blocks(title="Museum Collection Experiment") as demo:
+    condition = assign_condition(pid)
 
-    session_state = gr.State({})
-    chat_history  = gr.State([])
+    task = random.choice(TASKS)
 
-    gr.Markdown("# Museum Collection Study\nUser Study — Please complete the Pre-Task Survey first, then proceed to Setup.")
+    state["participant_id"] = pid
+    state["condition"] = condition
+    state["task"] = task
+    state["session_start"] = time.time()
+    state["query_count"] = 0
+    state["queries"] = []
 
-    # ── Tab 0: Pre-Task Survey ────────────────────────────────────────────────
-    with gr.Tab("Pre-Task Survey"):
-        gr.Markdown(
-            "### Before you begin\n"
-            "Please answer these short questions. They help us control for individual differences in the analysis.\n"
-            "All responses are anonymous."
+    log_event(
+        pid,
+        condition,
+        "session_start",
+        {
+            "task_id": task["id"],
+            "age": age,
+            "ai_usage": ai_usage,
+        }
+    )
+
+    task_html = f"""
+    <div style="
+        padding:20px;
+        border-radius:14px;
+        background:#f8f8f8;
+        border:1px solid #ddd;
+    ">
+
+    <div style="font-size:14px;color:#666;">
+        Assigned Condition: <b>{condition}</b>
+    </div>
+
+    <h2>
+        Task {task['id']} — {task['title']}
+    </h2>
+
+    <p style="font-size:18px;">
+        {task['description']}
+    </p>
+
+    </div>
+    """
+
+    show_search = condition == "A"
+    show_chat = condition == "B"
+
+    return (
+        state,
+        task_html,
+
+        gr.update(visible=False),
+        gr.update(visible=True),
+
+        gr.update(visible=show_search),
+        gr.update(visible=show_chat),
+    )
+
+# ── Finish Study ─────────────────────────────────────────────────────────
+def finish_study(confidence, comments, state):
+
+    elapsed = round(
+        time.time() - state["session_start"],
+        1
+    )
+
+    log_event(
+        state["participant_id"],
+        state["condition"],
+        "final_survey",
+        {
+            "confidence": confidence,
+            "comments": comments,
+            "queries": state["queries"],
+            "query_count": state["query_count"],
+            "time_s": elapsed,
+        }
+    )
+
+    return f"""
+    # Thank You
+
+    Your responses have been recorded.
+
+    Total queries: {state['query_count']}
+
+    Total time: {elapsed} seconds.
+    """
+
+# ── UI ───────────────────────────────────────────────────────────────────
+with gr.Blocks(
+    title="Museum Collection Study",
+    theme=gr.themes.Soft()
+) as demo:
+
+    state = gr.State({})
+    history = gr.State([])
+
+    # ── Welcome Screen ────────────────────────────────────────────────
+    with gr.Column(visible=True) as welcome_screen:
+
+        gr.Markdown("""
+        # Museum Collection Study
+
+        Welcome.
+
+        This study takes approximately 10 minutes.
+
+        You will complete:
+        - a short pre-survey
+        - one research task
+        - a short final survey
+        """)
+
+        pid_input = gr.Textbox(
+            label="Participant ID",
+            placeholder="e.g. P01"
         )
 
-        pre_pid = gr.Textbox(label="Participant ID (e.g. P01)", placeholder="P01")
-
-        gr.Markdown("#### Demographics")
-        with gr.Row():
-            pre_age       = gr.Number(label="Age", minimum=18, maximum=99, value=25)
-            pre_education = gr.Dropdown(
-                label="Highest education level",
-                choices=["Secondary / high school", "Bachelor's degree", "Master's degree",
-                         "PhD / doctorate", "Other"],
-            )
-            pre_language  = gr.Textbox(label="Native language", placeholder="e.g. Dutch")
-
-        gr.Markdown("#### Domain & Tool Familiarity")
-        pre_museum   = gr.Slider(1, 5, step=1, value=3,
-                                 label="Museum / art history familiarity (1 = none, 5 = expert)")
-        pre_ai_usage = gr.Dropdown(
-            label="How often do you use ChatGPT-style AI tools?",
-            choices=["Never", "Rarely (a few times a year)", "Sometimes (monthly)",
-                     "Often (weekly)", "Daily"],
-        )
-        pre_search   = gr.Slider(1, 5, step=1, value=3,
-                                 label="Comfort searching databases / library catalogues (1 = not at all, 5 = very comfortable)")
-
-        gr.Markdown(
-            "#### Attitude towards AI (AIAS-4)\n"
-            "Rate each statement from 1 (strongly disagree) to 5 (strongly agree). "
-            "*(Grassini, 2023)*"
-        )
-        with gr.Row():
-            pre_aias1 = gr.Slider(1, 5, step=1, value=3,
-                                  label="AI systems are capable of performing tasks as well as humans")
-            pre_aias2 = gr.Slider(1, 5, step=1, value=3,
-                                  label="I feel comfortable relying on AI for information")
-        with gr.Row():
-            pre_aias3 = gr.Slider(1, 5, step=1, value=3,
-                                  label="AI tools are a useful addition to everyday work")
-            pre_aias4 = gr.Slider(1, 5, step=1, value=3,
-                                  label="I trust AI-generated results to be mostly accurate")
-
-        pre_submit_btn = gr.Button("Save Pre-Task Survey", variant="primary")
-        pre_submit_out = gr.Markdown("")
-
-        pre_submit_btn.click(
-            submit_pre_survey,
-            [pre_pid, pre_age, pre_education, pre_language,
-             pre_museum, pre_ai_usage,
-             pre_aias1, pre_aias2, pre_aias3, pre_aias4,
-             pre_search, session_state],
-            [pre_submit_out],
+        age_input = gr.Number(
+            label="Age",
+            value=25
         )
 
-    # ── Tab 1: Setup ──────────────────────────────────────────────────────────
-    with gr.Tab("Setup"):
-        gr.Markdown("### Participant Setup\nEnter your details to begin.")
-
-        with gr.Row():
-            pid_box  = gr.Textbox(label="Participant ID (e.g. P01)", placeholder="P01")
-            cond_box = gr.Dropdown(
-                label="Condition (assigned by researcher)",
-                choices=["A — Keyword Search", "B — AI Chat"],
-                value="A — Keyword Search"
-            )
-
-        task_dropdown = gr.Dropdown(
-            label="Select your task",
-            choices=[f"Task {t['id']}: {t['title']}" for t in TASKS],
-            value="Task 1: Find a ritual object",
+        ai_usage_input = gr.Dropdown(
+            label="How often do you use AI tools?",
+            choices=[
+                "Never",
+                "Rarely",
+                "Sometimes",
+                "Often",
+                "Daily"
+            ]
         )
 
-        setup_btn = gr.Button("Start Session", variant="primary")
-        setup_out = gr.Markdown("")
-
-        finish_btn = gr.Button("Finish Task", variant="secondary")
-        finish_out = gr.Markdown("")
-
-        def start_session(pid, cond, task_label, state):
-            task_id = int(task_label.split(":")[0].replace("Task ", "").strip())
-            task = next(t for t in TASKS if t["id"] == task_id)
-            state["participant_id"] = pid
-            state["condition"]      = cond
-            state["task_id"]        = task_id
-            state["session_start"]  = time.time()
-            state["query_count"]    = 0
-            state["queries"]        = []
-            log_event(pid, cond, "session_start", {"task_id": task_id})
-            tab_name = "Keyword Search" if "A" in cond else "AI Chat"
-            return (
-                f"Session started for **{pid}** · Condition {cond} · Task {task_id}\n\n"
-                f"**Your task:** {task['description']}\n\n"
-                f"Now go to the **{tab_name}** tab."
-            ), state
-
-        setup_btn.click(start_session, [pid_box, cond_box, task_dropdown, session_state],
-                        [setup_out, session_state])
-        finish_btn.click(end_session, [session_state], [finish_out])
-
-    # ── Tab 2: Keyword Search ─────────────────────────────────────────────────
-    with gr.Tab("Keyword Search (Condition A)"):
-        gr.Markdown("### Condition A — Simple Keyword Search\nType keywords to search the museum collection. Results are direct matches only — no AI interpretation.")
-
-        with gr.Row():
-            search_box = gr.Textbox(
-                placeholder="e.g. ritual object, 1700, lacquer...",
-                show_label=False, scale=8
-            )
-            search_btn = gr.Button("Search", variant="primary", scale=1)
-
-        search_results = gr.HTML("<p style='color:#888;padding:20px;'>Results will appear here.</p>")
-
-        search_btn.click(search_condition_a, [search_box, session_state], [search_results, session_state])
-        search_box.submit(search_condition_a, [search_box, session_state], [search_results, session_state])
-
-    # ── Tab 3: AI Chat ────────────────────────────────────────────────────────
-    with gr.Tab("AI Chat (Condition B)"):
-        gr.Markdown("### Condition B — AI-Powered Research Assistant\nAsk questions in natural language. AI answers may contain errors — always verify with source links.")
-
-        # FIX: type="messages" → expects {"role": ..., "content": ...} dicts, not tuples
-        chatbot = gr.Chatbot(label="Chat", height=480)
-
-        with gr.Row():
-            chat_box = gr.Textbox(
-                placeholder="Ask about the collection...",
-                show_label=False, scale=9
-            )
-            chat_btn = gr.Button("Send", variant="primary", scale=1)
-
-        clear_btn = gr.Button("Clear chat", size="sm")
-
-        chat_btn.click(chat_condition_b, [chat_box, chat_history, session_state],
-                       [chat_box, chatbot, session_state, chat_history])
-        chat_box.submit(chat_condition_b, [chat_box, chat_history, session_state],
-                        [chat_box, chatbot, session_state, chat_history])
-        clear_btn.click(lambda: ([], []), None, [chatbot, chat_history])
-
-    # ── Tab 4: Tasks ──────────────────────────────────────────────────────────
-    with gr.Tab("Tasks"):
-        gr.Markdown("### Experiment Task Cards\nRead your assigned task carefully before starting.")
-        for t in TASKS:
-            with gr.Accordion(f"Task {t['id']}: {t['title']}", open=(t['id'] == 1)):
-                gr.Markdown(f"**Description:** {t['description']}")
-
-    # ── Tab 5: Survey ─────────────────────────────────────────────────────────
-    with gr.Tab("Survey"):
-        gr.Markdown(
-            "### Post-Task Survey\n"
-            "Complete this after finishing your task.\n"
-            "Sliders: 1 = strongly disagree / not at all · 7 = strongly agree / extremely."
+        start_btn = gr.Button(
+            "Start Study",
+            variant="primary",
+            size="lg"
         )
 
-        with gr.Row():
-            s_pid  = gr.Textbox(label="Your Participant ID")
-            s_cond = gr.Dropdown(label="Your Condition", choices=["A — Keyword Search", "B — AI Chat"])
-            s_task = gr.Dropdown(label="Task you completed",
-                                 choices=[f"Task {t['id']}: {t['title']}" for t in TASKS])
+    # ── Main Experiment Screen ───────────────────────────────────────
+    with gr.Column(visible=False) as experiment_screen:
 
-        with gr.Row():
-            s_completed = gr.Radio(label="Did you complete the task?", choices=["Yes", "Partially", "No"])
-            s_time      = gr.Number(label="Approx. time taken (minutes)", value=5)
+        task_display = gr.HTML()
 
-        gr.Markdown("#### Your Answer (H2 — Accuracy)")
-        s_answer_text = gr.Textbox(
-            label="What is your final answer to the task? (write it out fully)",
-            lines=3,
-            placeholder="e.g. The ritual object is called X, made in year Y, from culture Z."
-        )
-        s_confidence = gr.Slider(1, 7, step=1, value=4,
-                                 label="How confident are you that your answer is correct? (1 = not at all, 7 = completely sure)")
+        gr.Markdown("---")
 
-        gr.Markdown("#### TOAST Trust Scale (H3)")
-        with gr.Row():
-            s_toast_reliable    = gr.Slider(1, 7, step=1, value=4, label="The system performed reliably")
-            s_toast_confident   = gr.Slider(1, 7, step=1, value=4, label="I felt confident using this system")
-            s_toast_trustworthy = gr.Slider(1, 7, step=1, value=4, label="I found the system trustworthy")
+        # CONDITION A
+        with gr.Column(visible=False) as keyword_ui:
 
-        gr.Markdown("#### Cognitive Load — NASA-TLX (H4)")
-        with gr.Row():
-            s_tlx_mental = gr.Slider(1, 7, step=1, value=4,
-                                     label="How mentally demanding was the task? (1 = not at all, 7 = extremely)")
-            s_tlx_effort = gr.Slider(1, 7, step=1, value=4,
-                                     label="How hard did you have to work to accomplish your performance? (1 = very little, 7 = very hard)")
+            gr.Markdown("## Search Interface")
 
-        gr.Markdown("#### Manipulation Check")
-        s_manipulation = gr.Radio(
-            label="What kind of tool did you just use?",
-            choices=["Keyword search", "AI assistant", "Both", "Not sure"]
-        )
-
-        gr.Markdown("#### Critical Evaluation")
-        s_verified = gr.Radio(
-            label="Did you verify any answers with the source link?",
-            choices=["Yes, always", "Sometimes", "No"]
-        )
-
-        s_comments = gr.Textbox(label="Any comments or feedback? (optional)", lines=3,
-                                placeholder="What worked well? What was frustrating?")
-
-        survey_btn = gr.Button("Submit Survey", variant="primary")
-        survey_out = gr.Markdown("")
-
-        survey_btn.click(
-            submit_survey,
-            [s_pid, s_cond, s_task, s_completed, s_time,
-             s_answer_text, s_confidence,
-             s_toast_reliable, s_toast_confident, s_toast_trustworthy,
-             s_tlx_mental, s_tlx_effort,
-             s_manipulation,
-             s_verified, s_comments, session_state],
-            [survey_out],
-        )
-
-    # ── Tab 6: Researcher View (password protected) ───────────────────────────
-    with gr.Tab("Researcher View"):
-        gr.Markdown("### Researcher Access Only\nThis area is for the researcher. Participants do not need this tab.")
-
-        researcher_password = gr.Textbox(
-            label="Enter researcher password",
-            type="password",
-            placeholder="Enter password to unlock"
-        )
-        unlock_btn = gr.Button("Unlock", variant="primary")
-        access_msg = gr.Markdown("")
-
-        log_display   = gr.Code(label="experiment_log.jsonl", language="json", lines=30, visible=False)
-        with gr.Row(visible=False) as button_row:
-            refresh_btn  = gr.Button("Refresh Log", variant="secondary")
-            download_btn = gr.Button("⬇️ Download Log File", variant="primary")
-        download_file = gr.File(label="Your download will appear here", visible=False)
-
-        def unlock(password):
-            if password == RESEARCHER_PASSWORD:
-                return (
-                    "✅ Access granted. Welcome, researcher.",
-                    gr.update(visible=True, value=load_log()),
-                    gr.update(visible=True),
-                    gr.update(visible=True),
-                )
-            else:
-                return (
-                    "❌ Wrong password. Try again.",
-                    gr.update(visible=False),
-                    gr.update(visible=False),
-                    gr.update(visible=False),
+            with gr.Row():
+                search_box = gr.Textbox(
+                    placeholder="Search the collection..."
                 )
 
-        unlock_btn.click(
-            unlock,
-            [researcher_password],
-            [access_msg, log_display, button_row, download_file]
+                search_btn = gr.Button(
+                    "Search",
+                    variant="primary"
+                )
+
+            search_results = gr.HTML()
+
+        # CONDITION B
+        with gr.Column(visible=False) as chat_ui:
+
+            gr.Markdown("## AI Research Assistant")
+
+            chatbot = gr.Chatbot(
+                height=450,
+                type="messages"
+            )
+
+            with gr.Row():
+
+                chat_box = gr.Textbox(
+                    placeholder="Ask a question..."
+                )
+
+                chat_btn = gr.Button(
+                    "Send",
+                    variant="primary"
+                )
+
+        gr.Markdown("---")
+
+        continue_btn = gr.Button(
+            "Continue to Final Survey",
+            variant="secondary"
         )
 
-        refresh_btn.click(load_log, None, log_display)
-        download_btn.click(download_log, None, download_file)
+    # ── Final Survey ────────────────────────────────────────────────
+    with gr.Column(visible=False) as survey_screen:
 
+        gr.Markdown("# Final Survey")
+
+        confidence_slider = gr.Slider(
+            1,
+            7,
+            value=4,
+            step=1,
+            label="How confident are you in your answers?"
+        )
+
+        comments_box = gr.Textbox(
+            lines=4,
+            label="Comments or feedback"
+        )
+
+        submit_btn = gr.Button(
+            "Submit Study",
+            variant="primary",
+            size="lg"
+        )
+
+    # ── Thank You Screen ────────────────────────────────────────────
+    with gr.Column(visible=False) as thankyou_screen:
+
+        thankyou_text = gr.Markdown()
+
+    # ── Navigation ─────────────────────────────────────────────────
+    start_btn.click(
+        start_study,
+        inputs=[
+            pid_input,
+            age_input,
+            ai_usage_input,
+            state
+        ],
+        outputs=[
+            state,
+            task_display,
+
+            welcome_screen,
+            experiment_screen,
+
+            keyword_ui,
+            chat_ui,
+        ]
+    )
+
+    continue_btn.click(
+        lambda: (
+            gr.update(visible=False),
+            gr.update(visible=True)
+        ),
+        outputs=[
+            experiment_screen,
+            survey_screen
+        ]
+    )
+
+    submit_btn.click(
+        finish_study,
+        inputs=[
+            confidence_slider,
+            comments_box,
+            state
+        ],
+        outputs=[
+            thankyou_text
+        ]
+    ).then(
+        lambda: (
+            gr.update(visible=False),
+            gr.update(visible=True)
+        ),
+        outputs=[
+            survey_screen,
+            thankyou_screen
+        ]
+    )
+
+    # ── Search Events ──────────────────────────────────────────────
+    search_btn.click(
+        search_condition_a,
+        inputs=[search_box, state],
+        outputs=[search_results, state]
+    )
+
+    search_box.submit(
+        search_condition_a,
+        inputs=[search_box, state],
+        outputs=[search_results, state]
+    )
+
+    # ── Chat Events ────────────────────────────────────────────────
+    chat_btn.click(
+        chat_condition_b,
+        inputs=[chat_box, history, state],
+        outputs=[chat_box, chatbot, state, history]
+    )
+
+    chat_box.submit(
+        chat_condition_b,
+        inputs=[chat_box, history, state],
+        outputs=[chat_box, chatbot, state, history]
+    )
+
+# ── Launch ───────────────────────────────────────────────────────────────
 demo.launch()
