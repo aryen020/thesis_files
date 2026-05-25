@@ -563,7 +563,7 @@ with gr.Blocks(
 
             chatbot = gr.Chatbot(
                 height=550,
-                bubble_full_width=False
+                
             )
 
             with gr.Row(equal_height=True):
