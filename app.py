@@ -12,12 +12,21 @@ import gradio as gr
 import google.genai as genai
 from google.genai import types
 
-# ── Config ───────────────────────────────────────────────────────────────
+# ── Config ─────────────────────────────────────────────────────────────
 API_KEY             = os.environ["GEMINI_API_KEY"]
-STORE_NAME          = os.environ.get("STORE_NAME", "fileSearchStores/userstudystore-3gytybx82f4t")
-MODEL               = "gemini-2.5-flash"
-LOG_FILE            = "experiment_log.jsonl"
-CSV_PATH            = "small_dataset.csv"
+STORE_NAME          = os.environ.get(
+    "STORE_NAME",
+    "fileSearchStores/userstudystore-3gytybx82f4t"
+)
+
+RESEARCHER_PASSWORD = os.environ.get(
+    "RESEARCHER_PASSWORD",
+    "mypassword123"
+)
+
+MODEL       = "gemini-2.5-flash"
+LOG_FILE    = "experiment_log.jsonl"
+CSV_PATH    = "small_dataset.csv"
 
 client = genai.Client(api_key=API_KEY)
 
@@ -27,65 +36,93 @@ file_search_tool = types.Tool(
     )
 )
 
-# ── Tasks ────────────────────────────────────────────────────────────────
+# ── Tasks ──────────────────────────────────────────────────────────────
 TASKS = [
     {
         "id": 1,
         "title": "Find a ritual object",
-        "description": "Find any ritual object in the collection. What is it called, when was it made, and what culture does it come from?",
+        "description": (
+            "Find any ritual object in the collection. "
+            "What is it called, when was it made, "
+            "and what culture does it come from?"
+        ),
     },
     {
         "id": 2,
         "title": "Identify the oldest item",
-        "description": "What is the oldest item in the dataset? Provide its name, ID, and creation date.",
+        "description": (
+            "What is the oldest item in the dataset? "
+            "Provide its name, ID, and creation date."
+        ),
     },
     {
         "id": 3,
         "title": "Find lacquerware",
-        "description": "Find two examples of lacquerware in the collection. Who made them and when?",
+        "description": (
+            "Find two examples of lacquerware "
+            "in the collection. Who made them and when?"
+        ),
     },
     {
         "id": 4,
         "title": "Artworks from 1700",
-        "description": "How many items in the collection were created around 1700? List at least three.",
+        "description": (
+            "How many items in the collection were "
+            "created around 1700? List at least three."
+        ),
     },
     {
         "id": 5,
         "title": "Anonymous creators",
-        "description": "Find three items created by anonymous makers. What types of objects are they?",
+        "description": (
+            "Find three items created by anonymous makers. "
+            "What types of objects are they?"
+        ),
     },
 ]
 
-# ── Logging ──────────────────────────────────────────────────────────────
+# ── Logging ────────────────────────────────────────────────────────────
 def log_event(participant_id, condition, event_type, data):
+
     entry = {
         "timestamp": datetime.datetime.utcnow().isoformat(),
         "participant_id": participant_id,
         "condition": condition,
         "event": event_type,
     }
+
     entry.update(data)
 
     with open(LOG_FILE, "a") as f:
         f.write(json.dumps(entry) + "\n")
 
-# ── Condition Assignment ─────────────────────────────────────────────────
+# ── Assign Condition ───────────────────────────────────────────────────
 def assign_condition(pid):
+
     random.seed(pid)
+
     return random.choice(["A", "B"])
 
-# ── Keyword Search ───────────────────────────────────────────────────────
+# ── Keyword Search ─────────────────────────────────────────────────────
 def keyword_search(query):
+
     results = []
 
     try:
-        df = pd.read_csv(CSV_PATH, encoding="utf-8", encoding_errors="replace")
+
+        df = pd.read_csv(
+            CSV_PATH,
+            encoding="utf-8",
+            encoding_errors="replace"
+        )
 
         keywords = query.lower().split()
 
         mask = df.apply(
             lambda row: any(
-                kw in " ".join(row.astype(str).str.lower())
+                kw in " ".join(
+                    row.astype(str).str.lower()
+                )
                 for kw in keywords
             ),
             axis=1
@@ -94,6 +131,7 @@ def keyword_search(query):
         matched = df[mask].head(8)
 
         for _, row in matched.iterrows():
+
             results.append({
                 "id": str(row.get("ID", "")),
                 "title": str(row.get("Title", "Unknown")),
@@ -105,6 +143,7 @@ def keyword_search(query):
             })
 
     except Exception as e:
+
         results = [{
             "title": f"Error: {e}",
             "type": "",
@@ -116,7 +155,7 @@ def keyword_search(query):
 
     return results
 
-# ── Condition A Search ───────────────────────────────────────────────────
+# ── Condition A ────────────────────────────────────────────────────────
 def search_condition_a(query, state):
 
     if not query.strip():
@@ -138,7 +177,7 @@ def search_condition_a(query, state):
         {
             "query": query,
             "elapsed_s": elapsed,
-            "results": len(results)
+            "result_count": len(results),
         }
     )
 
@@ -149,46 +188,76 @@ def search_condition_a(query, state):
         img_html = ""
 
         if r["image"] and r["image"] != "nan":
+
             img_html = f"""
             <img src="{r['image']}"
-                 style="width:90px;height:90px;object-fit:cover;border-radius:8px;">
+                 style="
+                    width:90px;
+                    height:90px;
+                    object-fit:cover;
+                    border-radius:8px;
+                 ">
+            """
+
+        link = ""
+
+        if r["url"] and r["url"] != "nan":
+
+            link = f"""
+            <a href="{r['url']}"
+               target="_blank"
+               style="color:#c77d3a;">
+                View Record
+            </a>
             """
 
         cards += f"""
         <div style="
+            display:flex;
+            gap:14px;
+            background:white;
             border:1px solid #ddd;
             border-radius:12px;
             padding:14px;
             margin-bottom:12px;
-            display:flex;
-            gap:14px;
-            background:white;
         ">
+
             {img_html}
 
             <div>
-                <div style="font-weight:700;font-size:17px;">
+
+                <div style="
+                    font-weight:700;
+                    font-size:17px;
+                ">
                     {r['title']}
                 </div>
 
-                <div style="font-size:13px;color:#666;margin-top:4px;">
+                <div style="
+                    color:#666;
+                    font-size:13px;
+                    margin-top:5px;
+                ">
                     Type: {r['type']}<br>
                     Creator: {r['creator']}<br>
                     Date: {r['date']}
                 </div>
 
                 <div style="margin-top:8px;">
-                    <a href="{r['url']}" target="_blank">
-                        View Record
-                    </a>
+                    {link}
                 </div>
+
             </div>
+
         </div>
         """
 
     html = f"""
-    <div style="margin-bottom:10px;color:#666;">
-        {len(results)} results · {elapsed}s
+    <div style="
+        color:#777;
+        margin-bottom:12px;
+    ">
+        {len(results)} result(s) · {elapsed}s
     </div>
 
     {cards}
@@ -196,42 +265,47 @@ def search_condition_a(query, state):
 
     return html, state
 
-# ── Gemini Chat ──────────────────────────────────────────────────────────
-SYSTEM_PROMPT_B = (
-    "You are a helpful museum research assistant. "
-    "Answer using the indexed museum collection. "
-    "If unsure, say so explicitly."
-)
-
+# ── Gemini History Conversion ──────────────────────────────────────────
 def _to_gemini_contents(history):
 
     contents = []
 
-    for turn in history:
+    for user_msg, bot_msg in history:
 
-        if turn["role"] == "user":
+        if user_msg:
+
             contents.append(
                 types.Content(
                     role="user",
-                    parts=[types.Part(text=turn["content"])]
+                    parts=[types.Part(text=str(user_msg))]
                 )
             )
 
-        elif turn["role"] == "assistant":
+        if bot_msg:
+
             contents.append(
                 types.Content(
                     role="model",
-                    parts=[types.Part(text=turn["content"])]
+                    parts=[types.Part(text=str(bot_msg))]
                 )
             )
 
     return contents
 
-# ── Condition B Chat ─────────────────────────────────────────────────────
+# ── Condition B ────────────────────────────────────────────────────────
+SYSTEM_PROMPT_B = (
+    "You are a helpful museum research assistant. "
+    "Answer questions using the indexed collection documents. "
+    "Be clear and informative. "
+    "If unsure, explicitly say so."
+)
+
 def chat_condition_b(message, history, state):
 
     if not message.strip():
         return "", history, state, history
+
+    t_start = time.time()
 
     state["query_count"] += 1
     state["queries"].append(message)
@@ -244,8 +318,6 @@ def chat_condition_b(message, history, state):
             parts=[types.Part(text=message)]
         )
     )
-
-    t_start = time.time()
 
     try:
 
@@ -261,6 +333,7 @@ def chat_condition_b(message, history, state):
         answer = response.text or "No response generated."
 
     except Exception as e:
+
         answer = f"Error: {e}"
 
     elapsed = round(time.time() - t_start, 2)
@@ -277,14 +350,13 @@ def chat_condition_b(message, history, state):
     )
 
     new_history = history + [
-        {"role": "user", "content": message},
-        {"role": "assistant", "content": answer},
+        (message, answer)
     ]
 
     return "", new_history, state, new_history
 
-# ── Start Study ──────────────────────────────────────────────────────────
-def start_study(pid, age, ai_usage, state):
+# ── Start Session ──────────────────────────────────────────────────────
+def start_session(pid, age, ai_usage, state):
 
     condition = assign_condition(pid)
 
@@ -310,23 +382,35 @@ def start_study(pid, age, ai_usage, state):
 
     task_html = f"""
     <div style="
-        padding:20px;
-        border-radius:14px;
-        background:#f8f8f8;
+        background:#f9f9f9;
         border:1px solid #ddd;
+        border-radius:14px;
+        padding:20px;
+        margin-bottom:18px;
     ">
 
-    <div style="font-size:14px;color:#666;">
-        Assigned Condition: <b>{condition}</b>
-    </div>
+        <div style="
+            color:#666;
+            font-size:13px;
+            margin-bottom:8px;
+        ">
+            Assigned Condition: <b>{condition}</b>
+        </div>
 
-    <h2>
-        Task {task['id']} — {task['title']}
-    </h2>
+        <div style="
+            font-size:26px;
+            font-weight:700;
+            margin-bottom:10px;
+        ">
+            Task {task['id']} — {task['title']}
+        </div>
 
-    <p style="font-size:18px;">
-        {task['description']}
-    </p>
+        <div style="
+            font-size:18px;
+            line-height:1.6;
+        ">
+            {task['description']}
+        </div>
 
     </div>
     """
@@ -345,7 +429,7 @@ def start_study(pid, age, ai_usage, state):
         gr.update(visible=show_chat),
     )
 
-# ── Finish Study ─────────────────────────────────────────────────────────
+# ── Finish Study ───────────────────────────────────────────────────────
 def finish_study(confidence, comments, state):
 
     elapsed = round(
@@ -367,25 +451,30 @@ def finish_study(confidence, comments, state):
     )
 
     return f"""
-    # Thank You
+# Thank You
 
-    Your responses have been recorded.
+Your study session has been recorded successfully.
 
-    Total queries: {state['query_count']}
+### Session Summary
 
-    Total time: {elapsed} seconds.
-    """
+- Condition: {state['condition']}
+- Queries made: {state['query_count']}
+- Time spent: {elapsed} seconds
 
-# ── UI ───────────────────────────────────────────────────────────────────
+You may now close this page.
+"""
+
+# ── UI ─────────────────────────────────────────────────────────────────
 with gr.Blocks(
     title="Museum Collection Study",
-    theme=gr.themes.Soft()
+    theme=gr.themes.Soft(),
+    fill_height=True,
 ) as demo:
 
-    state = gr.State({})
-    history = gr.State([])
+    session_state = gr.State({})
+    chat_history = gr.State([])
 
-    # ── Welcome Screen ────────────────────────────────────────────────
+    # ── Welcome Screen ─────────────────────────────────────────────
     with gr.Column(visible=True) as welcome_screen:
 
         gr.Markdown("""
@@ -395,21 +484,23 @@ with gr.Blocks(
 
         This study takes approximately 10 minutes.
 
-        You will complete:
-        - a short pre-survey
-        - one research task
-        - a short final survey
+        You will:
+        - complete a short questionnaire
+        - complete one research task
+        - answer a short final survey
         """)
 
-        pid_input = gr.Textbox(
-            label="Participant ID",
-            placeholder="e.g. P01"
-        )
+        with gr.Row():
 
-        age_input = gr.Number(
-            label="Age",
-            value=25
-        )
+            pid_input = gr.Textbox(
+                label="Participant ID",
+                placeholder="e.g. P01"
+            )
+
+            age_input = gr.Number(
+                label="Age",
+                value=25
+            )
 
         ai_usage_input = gr.Dropdown(
             label="How often do you use AI tools?",
@@ -419,7 +510,7 @@ with gr.Blocks(
                 "Sometimes",
                 "Often",
                 "Daily"
-            ]
+            ],
         )
 
         start_btn = gr.Button(
@@ -428,74 +519,93 @@ with gr.Blocks(
             size="lg"
         )
 
-    # ── Main Experiment Screen ───────────────────────────────────────
+    # ── Experiment Screen ─────────────────────────────────────────
     with gr.Column(visible=False) as experiment_screen:
+
+        progress = gr.Markdown("""
+        ### Step 2 of 3 — Complete Your Research Task
+        """)
 
         task_display = gr.HTML()
 
-        gr.Markdown("---")
+        gr.Info(
+            "Use the interface below to complete your assigned task. "
+            "You may search as many times as needed."
+        )
 
-        # CONDITION A
+        # ── Condition A UI ─────────────────────────────────────
         with gr.Column(visible=False) as keyword_ui:
 
-            gr.Markdown("## Search Interface")
+            gr.Markdown("## Keyword Search")
 
-            with gr.Row():
+            with gr.Row(equal_height=True):
+
                 search_box = gr.Textbox(
-                    placeholder="Search the collection..."
+                    placeholder="Search the collection...",
+                    scale=8
                 )
 
                 search_btn = gr.Button(
                     "Search",
-                    variant="primary"
+                    variant="primary",
+                    size="lg",
+                    scale=1
                 )
 
-            search_results = gr.HTML()
+            search_results = gr.HTML(
+                "<p style='color:#888'>Results will appear here.</p>"
+            )
 
-        # CONDITION B
+        # ── Condition B UI ─────────────────────────────────────
         with gr.Column(visible=False) as chat_ui:
 
             gr.Markdown("## AI Research Assistant")
 
             chatbot = gr.Chatbot(
-                height=450,
-                type="messages"
+                height=550,
+                bubble_full_width=False
             )
 
-            with gr.Row():
+            with gr.Row(equal_height=True):
 
                 chat_box = gr.Textbox(
-                    placeholder="Ask a question..."
+                    placeholder="Ask about the collection...",
+                    scale=8
                 )
 
                 chat_btn = gr.Button(
                     "Send",
-                    variant="primary"
+                    variant="primary",
+                    size="lg",
+                    scale=1
                 )
 
         gr.Markdown("---")
 
         continue_btn = gr.Button(
-            "Continue to Final Survey",
-            variant="secondary"
+            "Continue to Final Survey →",
+            variant="secondary",
+            size="lg"
         )
 
-    # ── Final Survey ────────────────────────────────────────────────
+    # ── Final Survey ────────────────────────────────────────────
     with gr.Column(visible=False) as survey_screen:
 
-        gr.Markdown("# Final Survey")
+        gr.Markdown("""
+        ### Step 3 of 3 — Final Survey
+        """)
 
         confidence_slider = gr.Slider(
             1,
             7,
-            value=4,
             step=1,
-            label="How confident are you in your answers?"
+            value=4,
+            label="How confident are you in your final answers?"
         )
 
         comments_box = gr.Textbox(
             lines=4,
-            label="Comments or feedback"
+            label="Comments or feedback (optional)"
         )
 
         submit_btn = gr.Button(
@@ -504,22 +614,22 @@ with gr.Blocks(
             size="lg"
         )
 
-    # ── Thank You Screen ────────────────────────────────────────────
+    # ── Thank You Screen ────────────────────────────────────────
     with gr.Column(visible=False) as thankyou_screen:
 
         thankyou_text = gr.Markdown()
 
-    # ── Navigation ─────────────────────────────────────────────────
+    # ── Navigation ──────────────────────────────────────────────
     start_btn.click(
-        start_study,
+        start_session,
         inputs=[
             pid_input,
             age_input,
             ai_usage_input,
-            state
+            session_state
         ],
         outputs=[
-            state,
+            session_state,
             task_display,
 
             welcome_screen,
@@ -546,7 +656,7 @@ with gr.Blocks(
         inputs=[
             confidence_slider,
             comments_box,
-            state
+            session_state
         ],
         outputs=[
             thankyou_text
@@ -562,31 +672,61 @@ with gr.Blocks(
         ]
     )
 
-    # ── Search Events ──────────────────────────────────────────────
+    # ── Search Events ───────────────────────────────────────────
     search_btn.click(
         search_condition_a,
-        inputs=[search_box, state],
-        outputs=[search_results, state]
+        inputs=[
+            search_box,
+            session_state
+        ],
+        outputs=[
+            search_results,
+            session_state
+        ]
     )
 
     search_box.submit(
         search_condition_a,
-        inputs=[search_box, state],
-        outputs=[search_results, state]
+        inputs=[
+            search_box,
+            session_state
+        ],
+        outputs=[
+            search_results,
+            session_state
+        ]
     )
 
-    # ── Chat Events ────────────────────────────────────────────────
+    # ── Chat Events ─────────────────────────────────────────────
     chat_btn.click(
         chat_condition_b,
-        inputs=[chat_box, history, state],
-        outputs=[chat_box, chatbot, state, history]
+        inputs=[
+            chat_box,
+            chat_history,
+            session_state
+        ],
+        outputs=[
+            chat_box,
+            chatbot,
+            session_state,
+            chat_history
+        ]
     )
 
     chat_box.submit(
         chat_condition_b,
-        inputs=[chat_box, history, state],
-        outputs=[chat_box, chatbot, state, history]
+        inputs=[
+            chat_box,
+            chat_history,
+            session_state
+        ],
+        outputs=[
+            chat_box,
+            chatbot,
+            session_state,
+            chat_history
+        ]
     )
 
-# ── Launch ───────────────────────────────────────────────────────────────
+# ── Launch ─────────────────────────────────────────────────────────────
 demo.launch()
