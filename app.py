@@ -325,16 +325,15 @@ with gr.Blocks(
         gr.Markdown("**Ik ben comfortabel met het vertrouwen op AI voor informatie.**")
         pre_a4 = gr.Radio(["1","2","3","4","5"], label="", show_label=False)
 
+        pre_out = gr.HTML("")
         pre_btn = gr.Button("Opslaan & doorgaan →", variant="primary", size="lg")
-        pre_out = gr.Markdown("")
 
     # ── Stap 2: Setup ─────────────────────────────────────────────────────────
     with gr.Column(visible=False) as step2_col:
         gr.Markdown("## Stap 2 — Sessievoorbereiding\n*In te vullen door de onderzoeker.*")
-        with gr.Row():
-            pid_box  = gr.Textbox(label="Deelnemers-ID (auto-gegenereerd, aanpasbaar)", placeholder="bijv. P01")
-            cond_box = gr.Dropdown(label="Conditie",
-                choices=["A — Trefwoordzoeken","B — AI-chat"], value="A — Trefwoordzoeken")
+        pid_box  = gr.Textbox(visible=False, value="")
+        cond_box = gr.Dropdown(label="Conditie",
+            choices=["A — Trefwoordzoeken","B — AI-chat"], value="A — Trefwoordzoeken")
         gr.HTML("<div style='background:#fefce8;border:1px solid #fbbf24;border-radius:8px;"
                 "padding:12px 16px;margin:8px 0;font-size:14px;'>"
                 "ℹ️ De deelnemer doorloopt <strong>alle 5 taken</strong> achtereenvolgens "
@@ -356,7 +355,7 @@ with gr.Blocks(
 
         with gr.Column(visible=False) as cond_b_col:
             gr.Markdown("### 🤖 AI-onderzoeksassistent\n*AI-antwoorden kunnen fouten bevatten — verifieer altijd met bronlinks.*")
-            chatbot  = gr.Chatbot(label="Chat", height=400)
+            chatbot  = gr.Chatbot(label="Chat", height=400, type="tuples")
             with gr.Row():
                 chat_box = gr.Textbox(placeholder="Stel een vraag over de collectie...",
                                       show_label=False, scale=9)
@@ -463,22 +462,28 @@ with gr.Blocks(
 
     # Stap 1 → 2
     def on_pre_submit(pid, age, edu, lang, museum, ai_use, search_c, a1, a2, a3, a4, state):
-        missing = []
-        if age is None:                        missing.append("Leeftijd")
-        if not edu:                            missing.append("Opleidingsniveau")
-        if not lang or not str(lang).strip(): missing.append("Moedertaal")
-        if museum is None:                    missing.append("Museum vertrouwdheid")
-        if not ai_use:                        missing.append("AI-gebruik frequentie")
-        if search_c is None:                  missing.append("Database comfort")
-        if a1 is None:                        missing.append("AIAS vraag 1")
-        if a2 is None:                        missing.append("AIAS vraag 2")
-        if a3 is None:                        missing.append("AIAS vraag 3")
-        if a4 is None:                        missing.append("AIAS vraag 4")
+        field_labels = {
+            "age":      ("Leeftijd",            age is None),
+            "edu":      ("Opleidingsniveau",     not edu),
+            "lang":     ("Moedertaal",           not lang or not str(lang).strip()),
+            "museum":   ("Vertrouwdheid musea",  museum is None),
+            "ai_use":   ("AI-gebruik frequentie",not ai_use),
+            "search_c": ("Database comfort",     search_c is None),
+            "a1":       ("AIAS — vraag 1 (AI net zo goed als mensen)", a1 is None),
+            "a2":       ("AIAS — vraag 2 (AI geeft nauwkeurige info)", a2 is None),
+            "a3":       ("AIAS — vraag 3 (AI nuttig voor dagelijks werk)", a3 is None),
+            "a4":       ("AIAS — vraag 4 (comfortabel vertrouwen op AI)", a4 is None),
+        }
+        missing = [label for _, (label, is_missing) in field_labels.items() if is_missing]
         if missing:
-            return (f"⚠️ Vul alle velden in voor je verder gaat. Ontbreekt: {', '.join(missing)}",
-                    gr.update(), gr.update(), gr.update())
+            items = "".join(f"<li>{m}</li>" for m in missing)
+            err_html = (f"<div style='background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;"
+                        f"padding:12px 16px;color:#991b1b;font-size:14px;'>"
+                        f"<strong>⚠️ Vul de volgende velden in:</strong><ul style='margin:6px 0 0 18px;'>"
+                        f"{items}</ul></div>")
+            return (err_html, gr.update(), gr.update(), gr.update())
         submit_pre_survey(pid, age, edu, lang, museum, ai_use, search_c, a1, a2, a3, a4, state)
-        return ("✅ Opgeslagen. Geef de computer terug aan de onderzoeker.",
+        return ("<div style='color:#166534;font-weight:600;'>✅ Opgeslagen. Geef de computer terug aan de onderzoeker.</div>",
                 gr.update(value=make_progress(2)),
                 gr.update(visible=False),
                 gr.update(visible=True))
