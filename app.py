@@ -121,13 +121,12 @@ SYSTEM_PROMPT_B = (
 def _to_gemini_contents(history):
     contents = []
     for turn in (history or []):
-        if isinstance(turn, dict):
-            role = turn.get("role", "")
-            text = str(turn.get("content", ""))
-            if role == "user" and text:
-                contents.append(types.Content(role="user",  parts=[types.Part(text=text)]))
-            elif role == "assistant" and text:
-                contents.append(types.Content(role="model", parts=[types.Part(text=text)]))
+        if isinstance(turn, (list, tuple)) and len(turn) == 2:
+            user_msg, bot_msg = turn
+            if user_msg:
+                contents.append(types.Content(role="user",  parts=[types.Part(text=str(user_msg))]))
+            if bot_msg:
+                contents.append(types.Content(role="model", parts=[types.Part(text=str(bot_msg))]))
     return contents
 
 def chat_condition_b(message, history, state):
@@ -173,10 +172,7 @@ def chat_condition_b(message, history, state):
         })
     except Exception as e:
         answer = f"Fout: {e}"
-    new_history = list(history or []) + [
-        {"role": "user",      "content": message},
-        {"role": "assistant", "content": answer},
-    ]
+    new_history = list(history or []) + [[message, answer]]
     return "", new_history, state, new_history
 
 # ── Voorafgaande enquête ──────────────────────────────────────────────────────
@@ -339,7 +335,7 @@ with gr.Blocks(
 
         with gr.Column(visible=False) as cond_b_col:
             gr.Markdown("### 🤖 AI-onderzoeksassistent\n*AI-antwoorden kunnen fouten bevatten — verifieer altijd met bronlinks.*")
-            chatbot  = gr.Chatbot(label="Chat", height=400, type="messages")
+            chatbot  = gr.Chatbot(label="Chat", height=400)
             with gr.Row():
                 chat_box = gr.Textbox(placeholder="Stel een vraag over de collectie...",
                                       show_label=False, scale=9)
@@ -494,7 +490,7 @@ with gr.Blocks(
         })
         log_event(pid, cond, "session_start", {"condition": cond})
         log_event(pid, cond, "task_start",    {"task_id": 1, "task_index": 0})
-        is_a = "A" in cond
+        is_a = cond.startswith("A")
         return (
             f"✅ Sessie gestart — {pid} · {'Conditie A (Trefwoordzoeken)' if is_a else 'Conditie B (AI-chat)'}",
             state,
