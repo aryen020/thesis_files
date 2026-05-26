@@ -142,7 +142,12 @@ SYSTEM_PROMPT_B = (
 def _to_gemini_contents(history):
     contents = []
     for turn in (history or []):
-        if isinstance(turn, (list, tuple)) and len(turn) == 2:
+        if isinstance(turn, dict):
+            role = "model" if turn.get("role") == "assistant" else turn.get("role", "user")
+            text = turn.get("content", "")
+            if text:
+                contents.append(types.Content(role=role, parts=[types.Part(text=str(text))]))
+        elif isinstance(turn, (list, tuple)) and len(turn) == 2:
             user_msg, bot_msg = turn
             if user_msg:
                 contents.append(types.Content(role="user",  parts=[types.Part(text=str(user_msg))]))
@@ -193,7 +198,10 @@ def chat_condition_b(message, history, state):
         })
     except Exception as e:
         answer = f"Fout: {e}"
-    new_history = list(history or []) + [[message, answer]]
+    new_history = list(history or []) + [
+        {"role": "user", "content": message},
+        {"role": "assistant", "content": answer},
+    ]
     return "", new_history, state, new_history
 
 # ── Voorafgaande enquête ──────────────────────────────────────────────────────
@@ -355,7 +363,7 @@ with gr.Blocks(
 
         with gr.Column(visible=False) as cond_b_col:
             gr.Markdown("### 🤖 AI-onderzoeksassistent\n*AI-antwoorden kunnen fouten bevatten — verifieer altijd met bronlinks.*")
-            chatbot  = gr.Chatbot(label="Chat", height=400, type="tuples")
+            chatbot  = gr.Chatbot(label="Chat", height=400)
             with gr.Row():
                 chat_box = gr.Textbox(placeholder="Stel een vraag over de collectie...",
                                       show_label=False, scale=9)
