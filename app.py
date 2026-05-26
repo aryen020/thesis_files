@@ -339,7 +339,7 @@ with gr.Blocks(
 
         with gr.Column(visible=False) as cond_b_col:
             gr.Markdown("### 🤖 AI-onderzoeksassistent\n*AI-antwoorden kunnen fouten bevatten — verifieer altijd met bronlinks.*")
-            chatbot  = gr.Chatbot(label="Chat", height=400)
+            chatbot  = gr.Chatbot(label="Chat", height=400, type="messages")
             with gr.Row():
                 chat_box = gr.Textbox(placeholder="Stel een vraag over de collectie...",
                                       show_label=False, scale=9)
